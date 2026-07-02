@@ -1,0 +1,226 @@
+# Story 11 — Django + Wagtail (web + celery worker + media PVC + ingress).
+# Images are imported directly into k3s containerd by 10-deploy-app.sh,
+# hence imagePullPolicy: Never.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nora-media
+  namespace: nora
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nora-backend
+  namespace: nora
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nora-backend
+  template:
+    metadata:
+      labels:
+        app: nora-backend
+    spec:
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values: ["nora-app1"]
+      containers:
+        - name: backend
+          image: nora/backend:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - secretRef:
+                name: nora-backend
+          env:
+            - name: DJANGO_DEBUG
+              value: "false"
+            - name: DJANGO_ALLOWED_HOSTS
+              value: "*"
+            - name: DJANGO_CSRF_TRUSTED_ORIGINS
+              value: "http://nora.local,https://nora.local"
+            - name: WAGTAILADMIN_BASE_URL
+              value: "http://nora.local"
+            - name: CORS_ALLOWED_ORIGINS
+              value: "http://nora.local,https://nora.local"
+            - name: POSTGRES_HOST
+              value: nora-db-rw
+            - name: POSTGRES_DB
+              value: nora
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: nora-db-app
+                  key: username
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: nora-db-app
+                  key: password
+            - name: RABBITMQ_USER
+              valueFrom:
+                secretKeyRef:
+                  name: nora-rabbitmq
+                  key: RABBITMQ_DEFAULT_USER
+            - name: RABBITMQ_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: nora-rabbitmq
+                  key: RABBITMQ_DEFAULT_PASS
+            - name: CELERY_BROKER_URL
+              value: "amqp://$(RABBITMQ_USER):$(RABBITMQ_PASS)@rabbitmq:5672//"
+          volumeMounts:
+            - name: media
+              mountPath: /app/media
+          readinessProbe:
+            httpGet:
+              path: /api/v2/pages/
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: 512Mi
+            limits:
+              memory: 1Gi
+      volumes:
+        - name: media
+          persistentVolumeClaim:
+            claimName: nora-media
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nora-worker
+  namespace: nora
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nora-worker
+  template:
+    metadata:
+      labels:
+        app: nora-worker
+    spec:
+      containers:
+        - name: worker
+          image: nora/backend:latest
+          imagePullPolicy: Never
+          command: ["celery", "-A", "nora", "worker", "-l", "info"]
+          envFrom:
+            - secretRef:
+                name: nora-backend
+          env:
+            - name: RUN_MIGRATIONS
+              value: "false"
+            - name: POSTGRES_HOST
+              value: nora-db-rw
+            - name: POSTGRES_DB
+              value: nora
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: nora-db-app
+                  key: username
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: nora-db-app
+                  key: password
+            - name: RABBITMQ_USER
+              valueFrom:
+                secretKeyRef:
+                  name: nora-rabbitmq
+                  key: RABBITMQ_DEFAULT_USER
+            - name: RABBITMQ_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: nora-rabbitmq
+                  key: RABBITMQ_DEFAULT_PASS
+            - name: CELERY_BROKER_URL
+              value: "amqp://$(RABBITMQ_USER):$(RABBITMQ_PASS)@rabbitmq:5672//"
+          resources:
+            requests:
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nora-backend
+  namespace: nora
+spec:
+  selector:
+    app: nora-backend
+  ports:
+    - port: 8000
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nora-backend
+  namespace: nora
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: nora.local
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: nora-backend
+                port:
+                  number: 8000
+          - path: /cms
+            pathType: Prefix
+            backend:
+              service:
+                name: nora-backend
+                port:
+                  number: 8000
+          - path: /django-admin
+            pathType: Prefix
+            backend:
+              service:
+                name: nora-backend
+                port:
+                  number: 8000
+          - path: /documents
+            pathType: Prefix
+            backend:
+              service:
+                name: nora-backend
+                port:
+                  number: 8000
+          - path: /media
+            pathType: Prefix
+            backend:
+              service:
+                name: nora-backend
+                port:
+                  number: 8000
+          - path: /static
+            pathType: Prefix
+            backend:
+              service:
+                name: nora-backend
+                port:
+                  number: 8000

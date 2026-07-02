@@ -1,0 +1,83 @@
+# Story 17 — isolated security research namespace on nora-app2 (Node 3).
+#
+# Isolation model: a default-deny NetworkPolicy drops ALL ingress and egress
+# for every pod in the namespace, then narrow allow rules add back only what a
+# self-contained lab needs:
+#   - pod-to-pod traffic *within* security-lab (so the mock ROS2 nodes in
+#     Story 18 can talk to each other)
+#   - DNS to kube-dns (otherwise nothing in-cluster resolves)
+# Everything else — other namespaces, the cluster API, the internet, the host
+# LAN — stays blocked in both directions.
+#
+# NOTE: k3s ships Flannel, which does NOT enforce NetworkPolicy on its own.
+# The verification script (12-verify-security-lab.sh) checks for a policy
+# controller and warns if isolation won't actually be enforced. See that
+# script's header for the one-line fix (install Calico for policy, or start
+# k3s with a policy-capable CNI).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: security-lab
+  labels:
+    name: security-lab
+    purpose: security-research
+---
+# Deny everything in both directions by default.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: security-lab
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# Allow pods within security-lab to reach each other (both directions).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-intra-namespace
+  namespace: security-lab
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: security-lab
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: security-lab
+---
+# Allow DNS resolution to kube-dns (UDP+TCP 53) — required for Service names.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: security-lab
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+# Pin the whole namespace's future workloads to nora-app2 and keep them off it
+# elsewhere. Applied as a default via a scheduling hint on the sample pods in
+# Story 18; documented here so the intent lives with the namespace.

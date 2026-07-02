@@ -1,0 +1,75 @@
+# Story 18 — Scenario A: rogue node / unauthenticated command injection.
+# robot + operator + attacker(rogue) + capture sidecar, all in one pod.
+# The capture container records a rosbag and an RTPS pcap to an emptyDir for
+# collect-artifacts.sh to pull out.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: scenario-rogue
+  namespace: security-lab
+  labels:
+    lab: nora
+    scenario: rogue-injection
+spec:
+  restartPolicy: Never
+  nodeSelector:
+    kubernetes.io/hostname: nora-app2
+  volumes:
+    - name: artifacts
+      emptyDir: {}
+  containers:
+    - name: robot
+      image: nora/ros2-lab:latest
+      imagePullPolicy: Never
+      args: ["robot"]
+      env:
+        - { name: ROS_DOMAIN_ID, value: "42" }
+        - { name: ROS_LOCALHOST_ONLY, value: "1" }
+
+    - name: mission-control
+      image: nora/ros2-lab:latest
+      imagePullPolicy: Never
+      args: ["mission-control"]
+      env:
+        - { name: ROS_DOMAIN_ID, value: "42" }
+        - { name: ROS_LOCALHOST_ONLY, value: "1" }
+
+    - name: attacker-rogue
+      image: nora/ros2-lab:latest
+      imagePullPolicy: Never
+      args: ["rogue"]
+      env:
+        - { name: ROS_DOMAIN_ID, value: "42" }
+        - { name: ROS_LOCALHOST_ONLY, value: "1" }
+        - { name: ATTACK_LINEAR, value: "3.0" }
+        - { name: ATTACK_RATE_HZ, value: "20" }
+
+    - name: capture
+      image: nora/ros2-lab:latest
+      imagePullPolicy: Never
+      command: ["/bin/bash", "-lc"]
+      args:
+        - |
+          source /opt/ros/humble/setup.bash
+          mkdir -p /artifacts
+          echo "capturing for ${CAPTURE_SECONDS:-90}s..."
+          tcpdump -i lo -w /artifacts/rtps.pcap udp &
+          TCPDUMP=$!
+          ros2 bag record -a -o /artifacts/bag &
+          BAG=$!
+          sleep "${CAPTURE_SECONDS:-90}"
+          kill "$TCPDUMP" "$BAG" 2>/dev/null || true
+          sleep 3
+          echo done > /artifacts/CAPTURE_DONE
+          echo "capture complete; idling for artifact collection"
+          sleep 3600
+      env:
+        - { name: ROS_DOMAIN_ID, value: "42" }
+        - { name: ROS_LOCALHOST_ONLY, value: "1" }
+        - { name: CAPTURE_SECONDS, value: "90" }
+      securityContext:
+        capabilities:
+          add: ["NET_RAW"] # tcpdump on lo
+      volumeMounts:
+        - name: artifacts
+          mountPath: /artifacts

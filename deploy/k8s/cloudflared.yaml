@@ -1,0 +1,85 @@
+# Story 5 — cloudflared tunnel running inside k3s on nora-edge.
+#
+# This manifest is the *destination* of the setup: it assumes a tunnel already
+# exists and its credentials are stored in a secret. Create those first with
+# 13-cloudflared-setup.sh (run once, interactively, needs your Cloudflare login).
+#
+# Traffic path once live:
+#   browser -> Cloudflare edge -> tunnel (outbound from nora-edge, no open ports)
+#           -> ingress-nginx Service -> nora-frontend / nora-backend
+#
+# The tunnel connects OUTBOUND to Cloudflare, so the home network needs no port
+# forwarding and the public IP is never exposed (satisfies the story's criteria).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared
+  namespace: cloudflared
+spec:
+  replicas: 2 # two connections for zero-downtime config reloads
+  selector:
+    matchLabels:
+      app: cloudflared
+  template:
+    metadata:
+      labels:
+        app: cloudflared
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: nora-edge
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:latest
+          args:
+            - tunnel
+            - --config
+            - /etc/cloudflared/config.yaml
+            - run
+          livenessProbe:
+            httpGet:
+              path: /ready
+              port: 2000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          volumeMounts:
+            - name: config
+              mountPath: /etc/cloudflared
+              readOnly: true
+            - name: creds
+              mountPath: /etc/cloudflared/creds
+              readOnly: true
+          resources:
+            requests:
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+      volumes:
+        - name: config
+          configMap:
+            name: cloudflared-config
+        - name: creds
+          secret:
+            secretName: cloudflared-credentials
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloudflared-config
+  namespace: cloudflared
+data:
+  config.yaml: |
+    # Replace <TUNNEL_ID> and the hostname before applying (13-cloudflared-setup.sh
+    # does this substitution for you from env vars).
+    tunnel: <TUNNEL_ID>
+    credentials-file: /etc/cloudflared/creds/credentials.json
+    metrics: 0.0.0.0:2000
+    no-autoupdate: true
+    ingress:
+      # All public hostnames route to the in-cluster ingress-nginx controller,
+      # which then applies host/path rules + WAF (Story 6) exactly as on LAN.
+      - hostname: nora.example.com
+        service: http://ingress-nginx-controller.ingress-nginx.svc.cluster.local:80
+      - hostname: "*.nora.example.com"
+        service: http://ingress-nginx-controller.ingress-nginx.svc.cluster.local:80
+      # Required catch-all.
+      - service: http_status:404

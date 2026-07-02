@@ -1,0 +1,72 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: nora
+      POSTGRES_USER: nora
+      POSTGRES_PASSWORD: nora
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nora"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    ports:
+      - "15672:15672"
+
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      DJANGO_DEBUG: "true"
+      DJANGO_SECRET_KEY: dev-only-secret
+      DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,backend
+      DJANGO_SUPERUSER_USERNAME: admin
+      DJANGO_SUPERUSER_PASSWORD: admin
+      DJANGO_SUPERUSER_EMAIL: admin@example.com
+      POSTGRES_HOST: db
+      POSTGRES_DB: nora
+      POSTGRES_USER: nora
+      POSTGRES_PASSWORD: nora
+      CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
+      WAGTAILADMIN_BASE_URL: http://localhost:8000
+    volumes:
+      - media:/app/media
+    depends_on:
+      db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_started
+
+  worker:
+    build: ./backend
+    command: ["celery", "-A", "nora", "worker", "-l", "info"]
+    environment:
+      RUN_MIGRATIONS: "false"
+      DJANGO_SECRET_KEY: dev-only-secret
+      POSTGRES_HOST: db
+      POSTGRES_DB: nora
+      POSTGRES_USER: nora
+      POSTGRES_PASSWORD: nora
+      CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
+    depends_on:
+      - backend
+      - rabbitmq
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    environment:
+      WAGTAIL_API_URL: http://backend:8000
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
+  media:

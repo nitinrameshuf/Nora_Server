@@ -1,0 +1,35 @@
+# Story 18 — baseline "known-good" system: robot + operator, no attacker.
+# Run this first to confirm clean telemetry before introducing an attack.
+#
+# DDS-in-k8s note: all nodes run as containers in ONE pod (shared network
+# namespace) with ROS_LOCALHOST_ONLY=1, so DDS discovery happens over loopback.
+# This avoids multicast-across-CNI issues (Flannel doesn't pass multicast) and
+# keeps all RTPS traffic inside the pod. See docs/scenarios.md "Topology" for
+# the multi-pod discovery-server variant and why we don't use it here.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nora-baseline
+  namespace: security-lab
+  labels:
+    lab: nora
+    scenario: baseline
+spec:
+  restartPolicy: Never
+  nodeSelector:
+    kubernetes.io/hostname: nora-app2
+  containers:
+    - name: robot
+      image: nora/ros2-lab:latest
+      imagePullPolicy: Never
+      args: ["robot"]
+      env:
+        - { name: ROS_DOMAIN_ID, value: "42" }
+        - { name: ROS_LOCALHOST_ONLY, value: "1" }
+    - name: mission-control
+      image: nora/ros2-lab:latest
+      imagePullPolicy: Never
+      args: ["mission-control"]
+      env:
+        - { name: ROS_DOMAIN_ID, value: "42" }
+        - { name: ROS_LOCALHOST_ONLY, value: "1" }

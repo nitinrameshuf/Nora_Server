@@ -1,0 +1,77 @@
+# Story 9 — nightly PostgreSQL dump to the Dell NFS share, 14-day retention.
+# Requires the Dell NFS server (07-nfs-dell-server.sh) exporting /srv/nora-backups.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: nora-backup-nfs
+spec:
+  capacity:
+    storage: 50Gi
+  accessModes: ["ReadWriteMany"]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: nfs-backup
+  nfs:
+    server: 192.168.88.20
+    path: /srv/nora-backups
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nora-backup
+  namespace: nora
+spec:
+  accessModes: ["ReadWriteMany"]
+  storageClassName: nfs-backup
+  resources:
+    requests:
+      storage: 50Gi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nora-db-backup
+  namespace: nora
+spec:
+  schedule: "0 3 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: pg-dump
+              image: postgres:16-alpine
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  STAMP=$(date +%F-%H%M)
+                  pg_dump | gzip > "/backup/nora-${STAMP}.sql.gz"
+                  echo "wrote /backup/nora-${STAMP}.sql.gz"
+                  find /backup -name 'nora-*.sql.gz' -mtime +14 -delete
+              env:
+                - name: PGHOST
+                  value: nora-db-rw
+                - name: PGDATABASE
+                  value: nora
+                - name: PGUSER
+                  valueFrom:
+                    secretKeyRef:
+                      name: nora-db-app
+                      key: username
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: nora-db-app
+                      key: password
+              volumeMounts:
+                - name: backup
+                  mountPath: /backup
+          volumes:
+            - name: backup
+              persistentVolumeClaim:
+                claimName: nora-backup

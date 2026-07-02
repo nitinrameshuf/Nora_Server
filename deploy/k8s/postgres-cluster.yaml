@@ -1,0 +1,28 @@
+# Story 7 — PostgreSQL primary + streaming replica via CloudNativePG.
+# The operator handles replication, failover, and promotes the replica
+# automatically. Nodes must be labelled first (03-cluster-tooling.sh does it):
+#   kubectl label node nora-app1 nora.role=app
+#   kubectl label node nora-app2 nora.role=app
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: nora-db
+  namespace: nora
+spec:
+  instances: 2
+  bootstrap:
+    initdb:
+      database: nora
+      owner: nora
+  storage:
+    size: 5Gi
+    storageClass: local-path
+  affinity:
+    nodeSelector:
+      nora.role: app
+    podAntiAffinityType: required
+  resources:
+    requests:
+      memory: 512Mi
+    limits:
+      memory: 1Gi

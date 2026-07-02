@@ -1,0 +1,69 @@
+# Story 12 — Next.js frontend.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nora-frontend
+  namespace: nora
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nora-frontend
+  template:
+    metadata:
+      labels:
+        app: nora-frontend
+    spec:
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values: ["nora-app2"]
+      containers:
+        - name: frontend
+          image: nora/frontend:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 3000
+          env:
+            - name: WAGTAIL_API_URL
+              value: "http://nora-backend:8000"
+          resources:
+            requests:
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nora-frontend
+  namespace: nora
+spec:
+  selector:
+    app: nora-frontend
+  ports:
+    - port: 3000
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nora-frontend
+  namespace: nora
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: nora.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: nora-frontend
+                port:
+                  number: 3000

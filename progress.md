@@ -49,8 +49,8 @@ Always include:
 
 ---
 
-**Last Updated:** 2026-06-05
-**Project Status:** Architecture decided, Story 1 Next (MikroTik DHCP reservations)
+**Last Updated:** 2026-07-01
+**Project Status:** Application code + all deploy scripts written and code-validated (Stories 3–4, 6–13 CODE READY). Hardware stories (1, 2, 5) remain manual and are next.
 
 ---
 
@@ -85,28 +85,65 @@ Always include:
 
 ---
 
+## File Structure
+
+```
+backend/                  Django + Wagtail headless CMS (Story 11)
+  nora/                   settings, urls, wsgi, celery, API router
+  cms/                    page models (Home, BlogIndex/Blog, DesignPlanIndex/DesignPlan),
+                          migrations (incl. homepage bootstrap), admin-preview templates
+  Dockerfile, entrypoint.sh, requirements.txt
+frontend/                 Next.js 15 + TypeScript frontend (Story 12)
+  app/                    home, /blog, /blog/[slug], /design-plans, /design-plans/[slug]
+  lib/wagtail.ts          Wagtail API client
+  components/VideoEmbed.tsx  YouTube embed support
+  Dockerfile (standalone output)
+deploy/
+  k8s/                    namespace, secrets.example, postgres-cluster (CNPG),
+                          rabbitmq, backend, frontend, backup-nfs,
+                          security-lab (Story 17), cloudflared (Story 5) manifests
+  scripts/                01–13 numbered setup scripts, mapped to stories (see README):
+                          01/02 k3s, 03 tooling, 04 WAF, 05 postgres, 06 rabbitmq,
+                          07/08 NFS+backups, 09 wazuh, 10 deploy app, 11 smoke test,
+                          12 security-lab verify, 13 cloudflared setup
+security-lab/             Story 18 — mock ROS 2 attack surface (paper artifact)
+  ros2/nora_lab/          robot, mission_control, rogue, mitm nodes (ROS 2 Humble)
+  ros2/Dockerfile         ros:humble-ros-base + nodes + tcpdump
+  k8s/                    baseline + rogue + mitm scenario pods (co-located, loopback DDS)
+  scripts/                00-build-image.sh, run-scenario.sh
+  docs/                   threat-model, scenarios, wazuh-detection, hardening-sros2
+  artifacts/              (gitignored) collected bags/pcaps/logs
+docker-compose.yml        local dev: postgres + rabbitmq + backend + worker + frontend
+README.md                 run order and quickstart
+progress.md               this file
+```
+
+---
+
 ## Story Roadmap
 
 | Story | Title | Phase | Status |
 |---|---|---|---|
-| 1 | MikroTik DHCP reservations | Phase 1 | TODO |
-| 2 | RPi OS baseline — all 3 nodes | Phase 1 | TODO |
-| 3 | k3s cluster bootstrap | Phase 1 | TODO |
-| 4 | Cluster tooling — ingress-nginx, cert-manager, PVs | Phase 1 | TODO |
-| 5 | cloudflared tunnel + DNS | Phase 1 | TODO |
-| 6 | openappsec WAF deployment | Phase 1 | TODO |
-| 7 | PostgreSQL primary + replica | Phase 1 | TODO |
-| 8 | RabbitMQ deployment | Phase 1 | TODO |
-| 9 | NFS backup mount — RPis to Dell | Phase 1 | TODO |
-| 10 | Wazuh agents on all RPis | Phase 1 | TODO |
-| 11 | Django + Wagtail deployment | Phase 1 | TODO |
-| 12 | TypeScript frontend — headless Wagtail | Phase 1 | TODO |
-| 13 | End-to-end smoke test — site live on domain | Phase 1 | TODO |
-| 14 | ROS2 bridge node — Node 2 | Phase 2 | TODO |
+| 1 | MikroTik DHCP reservations | Phase 1 | TODO (manual) |
+| 2 | RPi OS baseline — all 3 nodes | Phase 1 | TODO (manual) |
+| 3 | k3s cluster bootstrap | Phase 1 | CODE READY — `deploy/scripts/01`, `02` |
+| 4 | Cluster tooling — ingress-nginx, cert-manager, PVs | Phase 1 | CODE READY — `deploy/scripts/03` |
+| 5 | cloudflared tunnel + DNS | Phase 1 | CONFIG READY — `deploy/k8s/cloudflared.yaml` + `deploy/scripts/13`; one manual browser login remains |
+| 6 | openappsec WAF deployment | Phase 1 | CODE READY — `deploy/scripts/04` (arm64 caveat, see Current Issues) |
+| 7 | PostgreSQL primary + replica | Phase 1 | CODE READY — `deploy/scripts/05` + `deploy/k8s/postgres-cluster.yaml` |
+| 8 | RabbitMQ deployment | Phase 1 | CODE READY — `deploy/scripts/06` + `deploy/k8s/rabbitmq.yaml` |
+| 9 | NFS backup mount — RPis to Dell | Phase 1 | CODE READY — `deploy/scripts/07`, `08` |
+| 10 | Wazuh agents on all RPis | Phase 1 | CODE READY — `deploy/scripts/09` |
+| 11 | Django + Wagtail deployment | Phase 1 | CODE READY + LOCALLY VERIFIED — full stack in docker compose |
+| 12 | TypeScript frontend — headless Wagtail | Phase 1 | CODE READY + LOCALLY VERIFIED — builds, renders CMS content end-to-end |
+| 13 | End-to-end smoke test — site live on domain | Phase 1 | CODE READY — `deploy/scripts/11-smoke-test.sh` (LAN/domain run pending cluster) |
+| 14 | ROS2 bridge node — Node 2 | Phase 2 | TODO — standardised on ROS 2 Humble (2026-07-02) |
 | 15 | Jetson ↔ Node 2 DDS discovery | Phase 2 | TODO |
 | 16 | Nora telemetry relay + ROS2 bag backup to Dell | Phase 2 | TODO |
-| 17 | Security lab namespace — Node 3 | Phase 2 | TODO |
-| 18 | Mock ROS2 attack surface — IEEE CPS-Sec paper artifact | Phase 2 | TODO |
+| 17 | Security lab namespace — Node 3 | Phase 2 | CODE READY — `deploy/k8s/security-lab.yaml` + `deploy/scripts/12` (needs Calico, see Current Issues) |
+| 18 | Mock ROS2 attack surface — IEEE CPS-Sec paper artifact | Phase 2 | CODE READY — `security-lab/` (nodes, scenarios, capture, docs) |
+
+**CODE READY** = code/scripts written and validated where possible on the dev machine; story completes only after it runs successfully on the cluster and acceptance criteria pass.
 
 ---
 
@@ -337,11 +374,13 @@ Always include:
 **Status:** TODO
 **Phase:** 2
 
-**Goal:** ROS2 Jazzy running on `nora-app1`, acting as bridge and state persistence layer for Nora.
+**Decision (2026-07-02):** standardised on **ROS 2 Humble** to match the robot (Jetson runs Humble). Original plan specified Jazzy — preserved in full under Retired Ideas. Rationale: same-distro across the DDS domain avoids message-definition drift and default-RMW mismatches, and de-risks Story 15 (Jetson↔Node 2 discovery). Humble is LTS (EOL May 2027); revisit at the next robot-side distro upgrade.
+
+**Goal:** ROS2 Humble running on `nora-app1`, acting as bridge and state persistence layer for Nora.
 
 **Tasks:**
-- Install ROS2 Jazzy on Node 2
-- Configure DDS to match Jetson setup
+- Install ROS2 Humble on Node 2 (match the Jetson/robot distro)
+- Configure DDS to match Jetson setup (same RMW — default FastDDS — and `ROS_DOMAIN_ID`)
 - Deploy mission state and logging nodes
 - ROS2 bag sync to Dell NFS on schedule
 
@@ -413,16 +452,66 @@ Always include:
 
 ## Current Issues
 
-None active.
+- **LOW PRIORITY — open-appsec arm64 support unverified.** The open-appsec agent may not ship linux/arm64 images for the RPi cluster. Verify with `docker manifest inspect` before Story 6; `deploy/scripts/04-openappsec.sh modsecurity` enables the ModSecurity + OWASP CRS fallback built into ingress-nginx.
+- **RESOLVED (2026-07-02) — frontend build verified.** Full stack brought up with `docker compose up --build`: all 5 services healthy, frontend compiled, and a blog post created in the CMS flowed backend → API → rendered frontend (listing, detail, homepage, YouTube embed). See Verification Log below.
+- **LOW PRIORITY — Story 17 needs a policy-capable CNI.** k3s ships Flannel, which ignores NetworkPolicy, so the security-lab isolation manifests apply cleanly but don't actually enforce until Calico (or Cilium) is installed. `deploy/scripts/12-verify-security-lab.sh` detects this and fails loudly rather than giving false assurance.
+
+---
+
+## Open Questions
+
+- **[RESOLVED 2026-07-02] ROS 2 distro mismatch: robot runs Humble, Story 14 planned Jazzy on Node 2.** Confirmed the Nora robot (Jetson) runs **ROS 2 Humble**. Decision: standardise Node 2 on **Humble** to match the robot — same-distro across the DDS domain avoids message-definition drift and default-RMW differences (de-risks Story 15). Story 14 detail updated; original Jazzy plan preserved under Retired Ideas. Story 18 lab already built on Humble.
+
+---
+
+## Verification Log
+
+### 2026-07-02 — Local stack end-to-end (Stories 11, 12; Story 8 broker path)
+Ran `docker compose up --build` on the dev machine (Docker Desktop). Results:
+- All services up: db (healthy), rabbitmq, backend, worker, frontend.
+- Backend: `/api/v2/pages/` 200 JSON, `/cms/login/` 200, migrations applied cleanly on PostgreSQL 16.
+- Created BlogIndexPage + BlogPage "Hello Nora" via `manage.py shell`; API returned it with `body_html` expanded and the YouTube URL intact.
+- Frontend: `/`, `/blog`, `/blog/hello-nora`, `/design-plans` all 200; detail page rendered the title, bold body HTML, and a `youtube-nocookie.com/embed/…` iframe.
+- Celery→RabbitMQ: `cms.tasks.ping` dispatched; worker log shows `Connected to amqp`, task received and `succeeded … 'pong'`. (Confirms Story 8 broker wiring works locally.)
+
+### 2026-07-02 — Story 18 scaffold authored + statically checked
+- Base image `ros:humble-ros-base` confirmed multi-arch (amd64 + **arm64**) via registry manifest inspection; matches the robot's ROS 2 Humble.
+- All 4 ROS 2 nodes (`robot`, `mission_control`, `rogue`, `mitm`) pass `py_compile`; 2 shell scripts + entrypoint pass `bash -n`; 3 scenario manifests parse as valid `Pod` YAML.
+- NOT yet run on-cluster: needs the k3s cluster + Story 17 namespace (and a policy CNI for enforced isolation). DDS-in-k8s handled by co-locating scenario nodes in one pod with `ROS_LOCALHOST_ONLY=1` (loopback discovery); multi-pod discovery-server variant documented but not default.
+
+## Architecture Decisions (2026-07-01, scaffolding session)
+
+1. **CloudNativePG operator for Story 7** instead of hand-rolled primary/replica StatefulSets. The operator manages streaming replication, failover, and promotion automatically; official images are multi-arch (arm64 OK). Services: `nora-db-rw` (primary) / `nora-db-ro` (replicas); app credentials auto-generated in secret `nora-db-app`.
+2. **Plain manifests with the official `rabbitmq:3.13-management` image for Story 8** rather than the Bitnami Helm chart — avoids Bitnami's uncertain arm64/catalog situation; single node pinned to `nora-app2`.
+3. **Registry-less image distribution.** No container registry is deployed: `10-deploy-app.sh` builds linux/arm64 images with buildx and streams them into k3s containerd on each node over ssh (`k3s ctr images import`). Revisit if image churn gets annoying (a in-cluster registry or ttl.sh would be the upgrade path).
+4. **Traefik disabled in k3s** (`--disable traefik`) since the locked stack uses ingress-nginx.
+5. **Headless-first Wagtail.** Content is served to the Next.js frontend via `/api/v2/` with a `body_html` API field (rich text pre-expanded server-side with `expand_db_html`). Minimal Django templates exist only so admin previews don't 500.
 
 ---
 
 ## Critical Learnings & Workarounds
 
-None yet.
+1. **Wagtail homepage data migrations must set `locale`.** Problem: `cms/migrations/0002_create_homepage` failed with `NOT NULL constraint failed: wagtailcore_page.locale_id`, masked by SQLite's atomic-block handling as a `TransactionManagementError`. Root cause: since Wagtail 2.11 (`wagtailcore.0054+`), `Page.locale` is a non-null FK, and historical models in data migrations don't run Wagtail's save logic that would populate it. Fix: fetch-or-create the default `Locale` in the migration and pass it to `HomePage.objects.create()`. Lesson: when hand-writing Wagtail page data migrations, always set `locale` explicitly; to find the real error behind a `TransactionManagementError`, walk `__cause__`/`__context__` to the root exception.
+2. **Newly published posts 404 on the frontend for up to ~60s (ISR + stale-while-revalidate).** Problem: after publishing "Hello Nora", the `/blog/hello-nora` detail page kept returning 404 well after the API served the post, while the listing/homepage picked it up. Root cause: `lib/wagtail.ts` fetches with `next: { revalidate: 60 }`; the detail route was first requested *before* the post existed, so Next cached a `notFound()` result. On expiry Next serves the STALE 404 on the first request and regenerates in the background — so it takes a revalidation window *plus* a throwaway request before the page turns 200. Not a bug (expected App Router behaviour), but a publishing-UX wrinkle. Lesson: for a headless CMS the clean fix is on-demand revalidation — add a Wagtail `page_published` signal that calls a Next revalidate webhook (`revalidatePath`/`revalidateTag`) — deferred as a Phase 1 polish item. Lowering `revalidate` only shortens, doesn't remove, the window.
+3. **Celery has no result backend by design; use `.delay()`, not `.delay().get()`.** Problem: `ping.delay().get()` raised `NotImplementedError: No result backend is configured` even though the task ran fine. Root cause: only `CELERY_BROKER_URL` (RabbitMQ) is set — RabbitMQ is a fire-and-forget broker here, with no result store (Redis/db). The task executed and succeeded on the worker; only result retrieval is unavailable. Lesson: this is intentional for async side-effect tasks; verify success via worker logs, not `.get()`. If a future task genuinely needs return values, add a result backend (Redis) rather than abusing RabbitMQ for it.
 
 ---
 
 ## Retired Ideas
 
-None yet.
+### [RETIRED 2026-07-02] Story 14 — ROS2 Bridge Node on ROS 2 Jazzy
+Superseded by the decision to standardise Node 2 on ROS 2 Humble to match the robot (Jetson runs Humble). Original plan preserved in full:
+
+> **Story 14 — ROS2 Bridge Node**
+> **Status:** TODO
+> **Phase:** 2
+>
+> **Goal:** ROS2 Jazzy running on `nora-app1`, acting as bridge and state persistence layer for Nora.
+>
+> **Tasks:**
+> - Install ROS2 Jazzy on Node 2
+> - Configure DDS to match Jetson setup
+> - Deploy mission state and logging nodes
+> - ROS2 bag sync to Dell NFS on schedule
+>
+> **Acceptance criteria:** Node 2 ROS2 nodes visible in `ros2 node list` from Jetson network.
