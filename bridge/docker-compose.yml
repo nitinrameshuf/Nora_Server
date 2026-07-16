@@ -1,0 +1,49 @@
+# Story 14 — ROS 2 Humble bridge, runs on Node 2 (nora-app1) via Docker Compose.
+#
+# network_mode: host is deliberate and load-bearing: DDS discovery with the
+# Jetson happens over the LAN (multicast + RTPS), which a bridged/CNI network
+# would block. Host networking puts these containers directly on Node 2's LAN
+# interface, in the same DDS domain as the robot. (This is also why the bridge is
+# NOT a k8s pod — k3s pod networking would break cross-host DDS discovery.)
+#
+# Set ROS_DOMAIN_ID to match the Jetson/robot. RMW left at the Humble default
+# (rmw_fastrtps_cpp) so it matches the robot's default.
+services:
+  mission-state:
+    build: ./ros2
+    image: nora/ros2-bridge:latest
+    network_mode: host
+    command: ["mission-state"]
+    environment:
+      ROS_DOMAIN_ID: "${ROS_DOMAIN_ID:-0}"
+    volumes:
+      - /var/lib/nora:/var/lib/nora        # SQLite mission-state persistence
+    restart: unless-stopped
+
+  event-logger:
+    image: nora/ros2-bridge:latest
+    network_mode: host
+    command: ["event-logger"]
+    environment:
+      ROS_DOMAIN_ID: "${ROS_DOMAIN_ID:-0}"
+    volumes:
+      - /var/log/nora:/var/log/nora        # JSON-lines for the Wazuh agent
+    depends_on:
+      - mission-state
+    restart: unless-stopped
+
+  bag-recorder:
+    image: nora/ros2-bridge:latest
+    network_mode: host
+    entrypoint: ["/bin/bash", "-lc"]
+    command:
+      - |
+        source /opt/ros/humble/setup.bash
+        exec ros2 bag record -a --max-bag-duration 3600 -o "/bags/nora_$(date +%Y%m%d_%H%M%S)"
+    environment:
+      ROS_DOMAIN_ID: "${ROS_DOMAIN_ID:-0}"
+    volumes:
+      - /var/lib/nora/bags:/bags            # bag-sync.sh rsyncs these to Dell NFS
+    depends_on:
+      - mission-state
+    restart: unless-stopped

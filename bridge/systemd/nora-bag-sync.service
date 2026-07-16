@@ -1,0 +1,14 @@
+# Story 14 — one-shot bag sync (invoked by nora-bag-sync.timer).
+# Install to /etc/systemd/system/ on Node 2 (install-node2.sh does this).
+[Unit]
+Description=Sync Nora ROS2 bags to Dell NFS
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/nora/bridge/scripts/bag-sync.sh
+# Match these to the NFS mount + source you configure on Node 2:
+Environment=BAG_SRC=/var/lib/nora/bags
+Environment=BAG_DEST=/mnt/nora-nfs/ros2-bags
+Environment=RETAIN_DAYS=14

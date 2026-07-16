@@ -1,0 +1,11 @@
+# Story 14 — run the bag sync every 15 minutes.
+[Unit]
+Description=Periodic Nora ROS2 bag sync to Dell NFS
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
